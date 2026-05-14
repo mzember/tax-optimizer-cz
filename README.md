@@ -51,38 +51,37 @@ datum_prodeje  příjem_CZK  náklad_CZK  zisk_CZK  osvobozeno  datum_nakupu_lot
 2025-12-17     231         173          58        ne          2024-08-29   ← 1,5 roku, zdaní se
 ```
 
-Do přiznání vstupuje jen součet zisků a ztrát z řádků označených `ne`. Pokud vyjde záporné číslo, základ je nula — ztrátu z krypta nelze odečíst od jiných příjmů (§10 odst. 4 ZDP).
+Do přiznání vstupuje součet zisků a ztrát z řádků označených `ne` — v rámci jednoho roku se ztráty a zisky vzájemně krátí. Pokud vyjde záporné číslo, základ je nula — roční ztrátu z krypta nelze odečíst od jiných příjmů ani přenést do dalšího roku (§10 odst. 4 ZDP).
 
 ### Proč záleží, který lot přiřadíte
 
-Různá přiřazení dávají různý výsledek. Příklad: na účtu jsou dva loty BTC a v jednom roce proběhnou dva prodeje.
+Různá přiřazení dávají různý výsledek. Příklad: na účtu jsou dva loty BTC a ve dvou různých letech proběhnou dva prodeje.
 
 ```
 Loty:    Lot A — nakoupeno za 500 000 Kč
          Lot B — nakoupeno za 1 000 000 Kč
 
-Prodeje: Prodej 1 — za 700 000 Kč  (v roce 2024)
-         Prodej 2 — za 1 200 000 Kč (v roce 2024)
+Prodeje: Prodej 1 — za 700 000 Kč  (rok 2024)
+         Prodej 2 — za 1 200 000 Kč (rok 2025)
 ```
 
 **Varianta 1** — nejdražší lot k prvnímu prodeji:
 
-| Prodej | Lot | Příjem | Náklad | Zisk/ztráta |
-|--------|-----|--------|--------|-------------|
-| Prodej 1 | Lot B (1 000 000) | 700 000 | 1 000 000 | **−300 000** (ztráta) |
-| Prodej 2 | Lot A (500 000)   | 1 200 000 | 500 000 | **+700 000** |
+| Rok | Prodej | Lot | Příjem | Náklad | Zisk/ztráta | Zdanitelný základ |
+|-----|--------|-----|--------|--------|-------------|-------------------|
+| 2024 | Prodej 1 | Lot B (1 000 000) | 700 000 | 1 000 000 | −300 000 | **0** (ztráta propadá) |
+| 2025 | Prodej 2 | Lot A (500 000)   | 1 200 000 | 500 000 | +700 000 | **700 000** |
 
-Zdanitelný základ: max(0, −300 000) + 700 000 = **700 000 Kč**
-(ztráta z Prodeje 1 nemůže snížit zisk z Prodeje 2 — jsou to oddělené řádky §10)
+Celkem za obě léta: **700 000 Kč** — ztráta z roku 2024 propadla, nedá se přenést.
 
-**Varianta 2** — obrácené pořadí:
+**Varianta 2** — levnější lot k prvnímu prodeji:
 
-| Prodej | Lot | Příjem | Náklad | Zisk/ztráta |
-|--------|-----|--------|--------|-------------|
-| Prodej 1 | Lot A (500 000)   | 700 000 | 500 000 | **+200 000** |
-| Prodej 2 | Lot B (1 000 000) | 1 200 000 | 1 000 000 | **+200 000** |
+| Rok | Prodej | Lot | Příjem | Náklad | Zisk/ztráta | Zdanitelný základ |
+|-----|--------|-----|--------|--------|-------------|-------------------|
+| 2024 | Prodej 1 | Lot A (500 000)   | 700 000 | 500 000 | +200 000 | **200 000** |
+| 2025 | Prodej 2 | Lot B (1 000 000) | 1 200 000 | 1 000 000 | +200 000 | **200 000** |
 
-Zdanitelný základ: 200 000 + 200 000 = **400 000 Kč**
+Celkem za obě léta: **400 000 Kč**
 
 Rozdíl 300 000 Kč — ze stejných obchodů, jen jiným přiřazením.
 
@@ -90,7 +89,7 @@ Rozdíl 300 000 Kč — ze stejných obchodů, jen jiným přiřazením.
 
 Ruční procházení všech kombinací je při stovkách lotů a prodejů přes více let nereálné. Nástroj formuluje celý problém jako soustavu nerovnic a předá ji solverovi lineárního programování (knihovna OR-Tools), který systematicky prohledá všechny přípustné kombinace a najde tu s nejnižším celkovým zdanitelným ziskem přes všechna léta dohromady.
 
-Důležité omezení: ztrátu z jednoho roku **nelze** přenést do dalšího (§10 ZDP). Kdyby nástroj optimalizoval rok po roce nezávisle, mohl by v roce se ztrátou „spotřebovat" drahé loty, které by jinak mohly snížit zisk v roce ziskovém. Optimalizace přes celé portfolio najednou tomuto problému předchází.
+Klíčové omezení: roční ztrátu **nelze** přenést do dalšího roku (§10 ZDP). Kdyby nástroj optimalizoval rok po roce nezávisle, mohl by v roce se ztrátou „spotřebovat" drahé loty, které by jinak mohly snížit zisk v roce ziskovém. Optimalizace přes celé portfolio najednou tomuto problému předchází.
 
 ---
 
