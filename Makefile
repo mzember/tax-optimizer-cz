@@ -71,6 +71,14 @@ build/parovani.csv: build/obohaceno.csv build/kontroly.md \
 		--lock config/zamknute_roky.toml \
 		--od-roku 2023
 
+build/audit.md: build/parovani.csv build/obohaceno.csv src/danove/audit.py
+	$(PYTHON) -m danove.audit \
+		--parovani build/parovani.csv \
+		--obchody build/obohaceno.csv \
+		--vystup $@ \
+		--config config/settings.toml \
+		--od-roku 2023
+
 define REPORT_RULE
 build/report_$(1).csv build/report_$(1).md build/report_$(1).xlsx: \
     build/parovani.csv src/danove/report.py
@@ -84,7 +92,7 @@ endef
 
 $(foreach rok,$(ROKY),$(eval $(call REPORT_RULE,$(rok))))
 
-report-vse: $(foreach rok,$(ROKY),build/report_$(rok).csv)
+report-vse: build/audit.md $(foreach rok,$(ROKY),build/report_$(rok).csv)
 
 test:
 	uv run pytest -v

@@ -180,6 +180,43 @@ def _load_locked(locked_path: Path) -> dict[str, Decimal]:
     return result
 
 
+# ── Pre-LP: greedy HIFO consumption of pre-optimisation sales ────────────────
+
+def _greedy_consume(loty: list[Lot], prodeje: list[Sale]) -> dict[str, Decimal]:
+    """Simulate exempt-first HIFO on `prodeje`, return {lot_id: consumed_qty}.
+
+    Used to subtract pre-od_roku sales from lot inventory before the LP runs,
+    so the LP cannot re-use lots that were already disposed of historically.
+    """
+    remaining: dict[str, Decimal] = {lot.lot_id: lot.mnozstvi for lot in loty}
+    consumed: dict[str, Decimal] = defaultdict(Decimal)
+
+    lots_by_coin: dict[str, list[Lot]] = defaultdict(list)
+    for lot in loty:
+        lots_by_coin[lot.coin].append(lot)
+
+    for sale in sorted(prodeje, key=lambda s: s.datum_prodeje):
+        need = sale.mnozstvi
+        eligible = [
+            l for l in lots_by_coin[sale.coin]
+            if l.datum_nakupu <= sale.datum_prodeje and remaining[l.lot_id] > Decimal("1e-9")
+        ]
+        # Prefer exempt lots first, then highest cost basis (HIFO)
+        eligible.sort(key=lambda l: (
+            0 if je_osvobozeno(l.datum_nakupu, sale.datum_prodeje) else 1,
+            -l.cena_za_kus_czk,
+        ))
+        for lot in eligible:
+            if need <= Decimal("1e-9"):
+                break
+            use = min(need, remaining[lot.lot_id])
+            remaining[lot.lot_id] -= use
+            consumed[lot.lot_id] += use
+            need -= use
+
+    return dict(consumed)
+
+
 # ── LP solver ────────────────────────────────────────────────────────────────
 
 def _solve(
@@ -446,10 +483,28 @@ def run(
 
     # Filter sales to optimized years only (earlier years are statute-of-limitations or already filed)
     prodeje_opt = [s for s in prodeje if s.rok >= od_roku]
-    vyrazeno = len(prodeje) - len(prodeje_opt)
+    pre_prodeje = [s for s in prodeje if s.rok < od_roku]
+    vyrazeno = len(pre_prodeje)
     if vyrazeno:
         print(f"optimalizace: přeskočeno {vyrazeno} prodejů před rokem {od_roku} (promlčené/podané)",
               file=sys.stderr)
+
+    # Subtract pre-od_roku lot consumption so LP cannot reuse already-disposed lots
+    if pre_prodeje:
+        pre_consumed = _greedy_consume(loty, pre_prodeje)
+        loty_residual = []
+        plne_spotrebovano = 0
+        for lot in loty:
+            used = pre_consumed.get(lot.lot_id, Decimal(0))
+            residual = lot.mnozstvi - used
+            if residual > Decimal("1e-9"):
+                loty_residual.append(lot._replace(mnozstvi=residual))
+            else:
+                plne_spotrebovano += 1
+        if plne_spotrebovano:
+            print(f"optimalizace: {plne_spotrebovano} lotů plně spotřebováno před {od_roku} — vyřazeno z LP",
+                  file=sys.stderr)
+        loty = loty_residual
 
     print(f"optimalizace: {len(loty)} lotů, {len(prodeje_opt)} prodejů ({od_roku}+), "
           f"zamčené roky: {zamknute_roky}", file=sys.stderr)
