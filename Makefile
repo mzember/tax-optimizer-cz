@@ -29,17 +29,28 @@ build/normalized/coinmate.csv: raw_input_data/coinmate src/danove/ingest/coinmat
 	@mkdir -p build/normalized
 	$(PYTHON) -m danove.ingest.coinmate --vstup raw_input_data/coinmate --vystup $@
 
+build/normalized/bitfinex.csv: raw_input_data/bitfinex src/danove/ingest/bitfinex.py
+	@mkdir -p build/normalized
+	$(PYTHON) -m danove.ingest.bitfinex --vstup raw_input_data/bitfinex --vystup $@
+
 build/normalized/electrum.csv: raw_input_data/electrum src/danove/ingest/electrum.py
 	@mkdir -p build/normalized
-	$(PYTHON) -m danove.ingest.electrum --vstup raw_input_data/electrum --vystup $@
+	$(PYTHON) -m danove.ingest.electrum --vstup raw_input_data/electrum --vystup $@ \
+		--jako-nakupy electrum-history-projekt.csv electrum-history_receiving_from_m.csv
 
 build/normalized/atomic.csv: raw_input_data/atomic src/danove/ingest/atomic.py
 	@mkdir -p build/normalized
 	$(PYTHON) -m danove.ingest.atomic --vstup raw_input_data/atomic --vystup $@
 
+build/normalized/paperwallet.csv: raw_input_data/paperwallet src/danove/ingest/electrum.py
+	@mkdir -p build/normalized
+	$(PYTHON) -m danove.ingest.electrum --vstup raw_input_data/paperwallet --vystup $@ \
+		--jako-nakupy paperwallet-btc-2015.csv
+
 NORMALIZED := build/normalized/binance.csv build/normalized/bitstamp.csv \
               build/normalized/bittrex.csv build/normalized/coinmate.csv \
-              build/normalized/electrum.csv build/normalized/atomic.csv
+              build/normalized/bitfinex.csv build/normalized/electrum.csv \
+              build/normalized/atomic.csv build/normalized/paperwallet.csv
 
 build/vsechny_obchody.csv build/vsechny_transfery.csv: $(NORMALIZED) src/danove/konsolidace.py config/vyloucene_transakce.txt
 	$(PYTHON) -m danove.konsolidace \

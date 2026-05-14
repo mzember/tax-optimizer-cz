@@ -3,11 +3,18 @@
 Columns: transaction_hash, label, confirmations, value, fiat_value, fee, fiat_fee, timestamp
 
 value  > 0 → DEPOSIT  (BTC received into wallet, no fee)
+             OR NAKUP  (if filename is in --jako-nakupy list)
 value  < 0 → WITHDRAWAL (BTC sent from wallet)
             mnozstvi   = abs(value) - fee  (amount actually leaving to recipient)
             fee_mnozstvi = fee             (miner fee)
 
 Rows with no timestamp (confirmations = 0, unconfirmed) are skipped.
+
+--jako-nakupy SOUBOR [SOUBOR...]: treat incoming transactions in these files
+  as NAKUP (acquisition lot) instead of DEPOSIT (transfer). Use for wallets
+  where received BTC represents a real purchase/income, not a cross-exchange
+  transfer. The enrichment step will assign the market BTC/CZK price at the
+  transaction date as the cost basis.
 """
 
 import argparse
@@ -30,7 +37,7 @@ def _dec(s: str) -> Decimal:
         return Decimal("0")
 
 
-def parse_file(path: Path) -> list[dict]:
+def parse_file(path: Path, jako_nakup: bool = False) -> list[dict]:
     rows = []
     with path.open(encoding="utf-8-sig") as f:
         for i, row in enumerate(csv.DictReader(f)):
@@ -47,9 +54,10 @@ def parse_file(path: Path) -> list[dict]:
             fee = _dec(row.get("fee", "0") or "0")
 
             if value > 0:
+                typ = "NAKUP" if jako_nakup else "DEPOSIT"
                 rows.append({
                     "id": rid, "burza": "electrum", "datum_utc": datum,
-                    "typ": "DEPOSIT", "coin": "BTC", "mnozstvi": str(value),
+                    "typ": typ, "coin": "BTC", "mnozstvi": str(value),
                     "protistrana_coin": "", "protistrana_mnozstvi": "0",
                     "fee_mnozstvi": "0", "fee_coin": "",
                     "zdroj_radek": str(dict(row)),
@@ -68,10 +76,13 @@ def parse_file(path: Path) -> list[dict]:
     return rows
 
 
-def run(vstup: Path, vystup: Path) -> None:
+def run(vstup: Path, vystup: Path, jako_nakupy: set[str] | None = None) -> None:
     all_rows: list[dict] = []
     for f in sorted(vstup.glob("*.csv")):
-        all_rows.extend(parse_file(f))
+        jako_nakup = (jako_nakupy is not None) and (f.name in jako_nakupy)
+        if jako_nakup:
+            print(f"electrum: {f.name} — příchozí transakce jako NAKUP", file=sys.stderr)
+        all_rows.extend(parse_file(f, jako_nakup=jako_nakup))
 
     all_rows.sort(key=lambda r: r["datum_utc"])
 
@@ -87,5 +98,10 @@ if __name__ == "__main__":
     parser = argparse.ArgumentParser()
     parser.add_argument("--vstup", required=True, type=Path)
     parser.add_argument("--vystup", required=True, type=Path)
+    parser.add_argument(
+        "--jako-nakupy", nargs="*", metavar="SOUBOR", default=None,
+        help="Názvy súborov (len basename), kde príchozí TX → NAKUP namiesto DEPOSIT",
+    )
     args = parser.parse_args()
-    run(args.vstup, args.vystup)
+    jako_nakupy = set(args.jako_nakupy) if args.jako_nakupy is not None else None
+    run(args.vstup, args.vystup, jako_nakupy=jako_nakupy)

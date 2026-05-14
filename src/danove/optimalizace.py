@@ -219,6 +219,9 @@ def _greedy_consume(loty: list[Lot], prodeje: list[Sale]) -> dict[str, Decimal]:
 
 # ── LP solver ────────────────────────────────────────────────────────────────
 
+CZK_SCALE = 1e-6  # LP works in MCZK units; condition number ≈ 2e5 vs 2e11 without scaling
+
+
 def _solve(
     loty: list[Lot],
     prodeje: list[Sale],
@@ -375,7 +378,8 @@ def _solve(
             gain_unit = float(sale.prijem_za_kus_czk - lot.cena_za_kus_czk)
             # lot fee per unit = fee_czk_total / mnozstvi (allocated proportionally)
             lot_fee_per_unit = float(lot.fee_czk_total / lot.mnozstvi) if lot.mnozstvi > 0 else 0.0
-            net_gain_unit = gain_unit - lot_fee_per_unit
+            # Scale to MCZK: keeps max matrix entry ~2 vs ~2M, condition number ≈ 1e5 vs 1e11
+            net_gain_unit = (gain_unit - lot_fee_per_unit) * CZK_SCALE
             c.SetCoefficient(x[(i, j)], -net_gain_unit)  # note: move to RHS
 
         # tax_base[y] >= gain[y]
@@ -408,7 +412,8 @@ def _solve(
 
         for y in years:
             v = primary_tax_base[y]
-            c_fix = solver.Constraint(v - 1.0, v + 1.0)  # ±1 CZK tolerance
+            tol = 1.0 * CZK_SCALE  # ±1 CZK in scaled units
+            c_fix = solver.Constraint(v - tol, v + tol)
             c_fix.SetCoefficient(tax_base[y], 1.0)
 
         objective2 = solver.Objective()
@@ -498,7 +503,13 @@ def run(
             used = pre_consumed.get(lot.lot_id, Decimal(0))
             residual = lot.mnozstvi - used
             if residual > Decimal("1e-9"):
-                loty_residual.append(lot._replace(mnozstvi=residual))
+                # Proportionally reduce fee so fee/unit stays constant → prevents
+                # LP numerical overflow when residual is near-zero (e.g. 1 satoshi).
+                fee_residual = (
+                    lot.fee_czk_total * residual / lot.mnozstvi
+                    if lot.mnozstvi > 0 else Decimal(0)
+                )
+                loty_residual.append(lot._replace(mnozstvi=residual, fee_czk_total=fee_residual))
             else:
                 plne_spotrebovano += 1
         if plne_spotrebovano:
@@ -522,19 +533,19 @@ def run(
     for p in parovani:
         y = int(p["rok_prodeje"])
         if y not in roky:
-            roky[y] = {"prijem": Decimal("0"), "naklad": Decimal("0"),
-                       "osvobozeno_zisk": Decimal("0"), "zdanitelny_zisk": Decimal("0")}
+            roky[y] = {"osvobozeno_zisk": Decimal("0"), "neosv_netto": Decimal("0")}
         zisk = Decimal(p["zisk_czk"])
         if p["osvobozeno"] == "ano":
             roky[y]["osvobozeno_zisk"] += zisk
         else:
-            if zisk > 0:
-                roky[y]["zdanitelny_zisk"] += zisk
+            roky[y]["neosv_netto"] += zisk
 
     print("\n=== Souhrn po letech ===", file=sys.stderr)
     for y in sorted(roky):
         r = roky[y]
-        print(f"  {y}: zdanitelný zisk {r['zdanitelny_zisk']:.2f} CZK, "
+        zdanitelny = max(Decimal("0"), r["neosv_netto"])
+        print(f"  {y}: zdanitelný zisk {zdanitelny:.2f} CZK "
+              f"(neosvobozené netto {r['neosv_netto']:.2f} CZK), "
               f"osvobozeno {r['osvobozeno_zisk']:.2f} CZK", file=sys.stderr)
     print(f"\nParování: {len(parovani)} řádků → {vystup}", file=sys.stderr)
 

@@ -152,7 +152,22 @@ def run(parovani_path: Path, obchody_path: Path, vystup_path: Path,
                 "chybi": str(gap.quantize(Decimal("0.00000001"))),
             })
 
-    # ── Check 4: WRONG_EXEMPT ────────────────────────────────────────────────
+    # ── Check 4: ARITH_ERR ──────────────────────────────────────────────────
+    arith_err: list[dict] = []
+    for row in parovani:
+        prijem = _dec(row.get("prijem_czk", "0"))
+        naklad = _dec(row.get("naklad_czk", "0"))
+        zisk = _dec(row.get("zisk_czk", "0"))
+        diff = abs(prijem - naklad - zisk)
+        if diff > Decimal("0.01"):
+            arith_err.append({
+                "prodej_id": row["prodej_id"], "lot_id": row["lot_id"],
+                "coin": row["coin"], "datum_prodeje": row["datum_prodeje"],
+                "prijem": str(prijem), "naklad": str(naklad), "zisk": str(zisk),
+                "rozdil": str(diff.quantize(Decimal("0.01"))),
+            })
+
+    # ── Check 5: WRONG_EXEMPT ────────────────────────────────────────────────
     wrong_exempt: list[dict] = []
     for row in parovani:
         if row["lot_id"].startswith("phantom:"):
@@ -174,7 +189,7 @@ def run(parovani_path: Path, obchody_path: Path, vystup_path: Path,
             })
 
     # ── Write report ─────────────────────────────────────────────────────────
-    n_err = len(lot_overage) + len(before_buy) + len(sale_gap)
+    n_err = len(lot_overage) + len(before_buy) + len(sale_gap) + len(arith_err)
     n_warn = len(wrong_exempt) + len(pre_uncovered)
 
     lines: list[str] = [
@@ -191,6 +206,21 @@ def run(parovani_path: Path, obchody_path: Path, vystup_path: Path,
     if not n_err and not n_warn:
         lines.append("Žádné problémy nalezeny. ✓")
     else:
+        if arith_err:
+            lines += [
+                "## ERR: ARITH_ERR — příjem - náklad ≠ zisk (tolerance 0.01 Kč)",
+                "",
+                "| prodej_id | lot_id | coin | datum_prodeje | příjem | náklad | zisk | rozdíl |",
+                "|-----------|--------|------|---------------|--------|--------|------|--------|",
+            ]
+            for e in arith_err:
+                lines.append(
+                    f"| `{e['prodej_id']}` | `{e['lot_id']}` | {e['coin']} "
+                    f"| {e['datum_prodeje']} | {e['prijem']} | {e['naklad']} "
+                    f"| {e['zisk']} | **{e['rozdil']}** |"
+                )
+            lines.append("")
+
         if lot_overage:
             lines += [
                 "## ERR: LOT_OVERAGE — lot použit více než dostupné množství",

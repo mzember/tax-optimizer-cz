@@ -29,6 +29,11 @@ CZK,CZK,,fiat
 GBP,GBP,,fiat
 CHF,CHF,,fiat
 BTXCRD,BTXCRD,,ignore
+DSH,DASH,dash,crypto
+IOT,MIOTA,iota,crypto
+MIOTA,MIOTA,iota,crypto
+BCH,BCH,bitcoin-cash,crypto
+BAT,BAT,basic-attention-token,crypto
 TRX,TRX,tron,crypto
 WIN,WIN,wink,ignore
 JST,JST,just,ignore
