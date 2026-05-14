@@ -1,0 +1,3 @@
+ID;Datum;Typ;Částka;Částka měny;Cena;Cena měny;Poplatek;Poplatek měny;Celkem;Celkem měny;Popisek;Status;První zůstatek po;První zůstatek po měně;Druhý zůstatek po;Druhý zůstatek po měně
+2001;2020-01-01 09:00:00;BUY;1.0;BTC;100000;CZK;0;CZK;-100000;CZK;;OK;1.0;BTC;0;CZK
+2002;2023-06-01 09:00:00;SELL;-1.0;BTC;300000;CZK;0;CZK;300000;CZK;;OK;0.0;BTC;300000;CZK

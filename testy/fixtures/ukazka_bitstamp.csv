@@ -1,0 +1,3 @@
+ID,Account,Type,Subtype,Datetime,Amount,Amount currency,Value,Value currency,Rate,Rate currency,Fee,Fee currency,Order ID
+1001,Main,Market,Buy,2020-01-01T10:00:00Z,2.0,BTC,200000.0,CZK,100000.0,CZK,0.0,CZK,ORD001
+1002,Main,Market,Sell,2024-01-01T10:00:00Z,1.0,BTC,300000.0,CZK,300000.0,CZK,0.0,CZK,ORD002

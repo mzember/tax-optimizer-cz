@@ -1,0 +1,23 @@
+build/
+__pycache__/
+*.pyc
+.venv/
+*.egg-info/
+.pytest_cache/
+
+# osobné dáta — nesmú ísť na GitHub
+raw_input_data/
+data/
+*.duckdb
+
+# súkromné konfigurácie (verejné sú *.example.* varianty)
+config/vyloucene_transakce.txt
+config/zamknute_roky.toml
+
+# interné súbory Claude Code
+.claude/
+CLAUDE.md
+
+# interné poznámky projektu
+First-assignment.md
+*-this-session-is-being-continued-*.txt

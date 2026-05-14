@@ -1,0 +1,5 @@
+User ID,Time,Account,Operation,Coin,Change,Remark
+99999,20-01-01 10:00:00,Spot,Deposit,BTC,2.0,
+99999,20-06-01 12:00:00,Spot,Sell,LTC,-5.0,
+99999,20-06-01 12:00:00,Spot,Buy,BTC,0.05,
+99999,20-06-01 12:00:00,Spot,Fee,BTC,-0.0001,

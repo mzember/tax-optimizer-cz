@@ -1,0 +1,7 @@
+# Roky, které již byly podány v daňovém přiznání.
+# Optimalizace pro tyto roky fixuje párování na hodnoty uložené v zamcene_parovani.
+# Po podání roku přidej ho sem a ulož aktuální build/parovani.csv jako zamcene_parovani.
+#
+# Zkopírujte jako zamknute_roky.toml.
+zamknute = []
+zamcene_parovani = "build/parovani_zamcene.csv"

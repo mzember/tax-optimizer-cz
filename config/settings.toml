@@ -1,0 +1,15 @@
+[obecne]
+# "cnb_denni" = daily ČNB exchange rate for each trade date
+# "cnb_jednotny" = single annual average rate (§38 ZDP) — requires config/jednotny_kurz_<rok>.csv
+vychozi_kurz = "cnb_denni"
+
+# Lot-matching strategy:
+# "test_3roky_pak_hifo" = first use lots held >3 years (FIFO among them), then taxable by highest cost basis
+# "test_3roky_pak_fifo" = first use lots held >3 years (FIFO among them), then taxable by FIFO
+vychozi_strategie = "lp"  # always use global LP; greedy modes are for comparison only
+
+[rok.2018]
+kurz = "cnb_jednotny"
+
+[rok.2019]
+kurz = "cnb_jednotny"

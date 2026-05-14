@@ -1,0 +1,16 @@
+# Vyloučené transakce — ID z normalized CSV (jedno ID na řádek, # = komentář)
+#
+# Použití: záznamy v tomto souboru se přeskočí při konsolidaci (nevstoupí
+# do vsechny_obchody.csv ani vsechny_transfery.csv).
+#
+# Formát ID: "<burza>:<exchange_id>", např. "coinmate:17821988"
+#
+# Zkopírujte tento soubor jako vyloucene_transakce.txt a doplňte vlastní záznamy.
+#
+# Typické důvody pro vyloučení:
+#   - chybný duplikát transakce na straně burzy
+#   - interní opravná transakce bez reálného pohybu aktiv
+#   - storno/reverz, kde burza vytvořila záznamy na obě strany
+#
+# Příklad:
+# coinmate:12345678
