@@ -12,6 +12,8 @@ from datetime import datetime, timedelta
 from decimal import Decimal
 from pathlib import Path
 
+from danove.util import coin as coin_util
+
 STABLECOINS = {"USDT", "USDC", "BUSD", "DAI", "TUSD", "GUSD", "PAX"}
 DUST_CZK_THRESHOLD = Decimal("100")
 FIAT_COINS = {"CZK", "EUR", "USD", "GBP", "CHF", "HUF", "PLN"}
@@ -34,7 +36,7 @@ def _dt(s: str) -> datetime:
     return datetime.min
 
 
-def check_balance(obchody: list[dict]) -> list[str]:
+def check_balance(obchody: list[dict]) -> tuple[list[str], dict[str, Decimal]]:
     """Detect negative running balances per coin."""
     balance: dict[str, Decimal] = defaultdict(Decimal)
     issues = []
@@ -72,7 +74,12 @@ def check_balance(obchody: list[dict]) -> list[str]:
 
 
 def check_sale_before_acq(obchody: list[dict]) -> list[str]:
-    """Detect sales before any acquisition exists for that coin."""
+    """Detect sales before any acquisition exists for that coin.
+
+    WARN only — optimalizace.py handles this via phantom lots (full proceeds
+    taxed, no 3-year exemption) and the report flags it as an undocumented
+    purchase, so it must not block the pipeline.
+    """
     first_nakup: dict[str, str] = {}
     issues = []
     for row in sorted(obchody, key=lambda r: r.get("datum_utc", "")):
@@ -84,8 +91,8 @@ def check_sale_before_acq(obchody: list[dict]) -> list[str]:
         elif typ == "PRODEJ":
             if coin not in first_nakup:
                 issues.append(
-                    f"ERROR: PRODEJ {coin} dne {datum[:10]} bez předchozího NAKUP — "
-                    "chybí historická data?"
+                    f"WARN: PRODEJ {coin} dne {datum[:10]} bez předchozího NAKUP — "
+                    "chybí historická data; bude zdaněno phantom lotem v plné výši"
                 )
     return issues
 
@@ -136,7 +143,25 @@ def check_duplicates(obchody: list[dict]) -> list[str]:
 
 
 def check_unmatched_transfers(transfery: list[dict], manual_mapovani: Path | None) -> list[str]:
-    """Heuristic: find withdrawal→deposit pairs across exchanges."""
+    """Heuristic: pair withdrawals with deposits across exchanges.
+
+    Reports both unmatched withdrawals and unmatched deposits — an unmatched
+    deposit may be an external acquisition (undocumented lot). Fiat movements
+    (bank deposits/withdrawals) are skipped: they fund trades, they are not
+    crypto lots. Tickers are normalised (XBT→BTC, DSH→DASH …) before comparison
+    and candidates are assigned best-first (closest in time), so an internal
+    or duplicate row cannot steal a pairing from the real transfer.
+    """
+    # coin_aliases.csv lives next to the manual-mapping file, if one was passed.
+    if manual_mapovani and manual_mapovani.exists():
+        try:
+            coin_util.init(manual_mapovani.parent)
+        except Exception:
+            pass
+
+    def _norm(c: str) -> str:
+        return coin_util.normalizuj(c or "")
+
     manual_pairs: set[tuple[str, str]] = set()
     if manual_mapovani and manual_mapovani.exists():
         with manual_mapovani.open(encoding="utf-8") as f:
@@ -146,49 +171,78 @@ def check_unmatched_transfers(transfery: list[dict], manual_mapovani: Path | Non
                 if w and d and not w.startswith("#"):
                     manual_pairs.add((w, d))
 
-    withdrawals = [r for r in transfery if r.get("typ") == "WITHDRAWAL"]
-    deposits = [r for r in transfery if r.get("typ") == "DEPOSIT"]
+    # Crypto only — a fiat deposit/withdrawal is a bank movement, not a lot.
+    withdrawals = [
+        r for r in transfery
+        if r.get("typ") == "WITHDRAWAL" and _norm(r.get("coin", "")) not in FIAT_COINS
+    ]
+    deposits = [
+        r for r in transfery
+        if r.get("typ") == "DEPOSIT" and _norm(r.get("coin", "")) not in FIAT_COINS
+    ]
 
-    issues = []
     matched_w: set[str] = set()
     matched_d: set[str] = set()
-
     for w, d in manual_pairs:
         matched_w.add(w)
         matched_d.add(d)
 
-    # Heuristic matching
+    # Build every plausible withdrawal→deposit candidate, then assign the
+    # closest-in-time pair first. A single greedy first-match would let an
+    # earlier internal/duplicate row grab the deposit before the real transfer.
+    candidates: list[tuple[float, float, str, str]] = []
     for wd in withdrawals:
         if wd.get("id") in matched_w:
             continue
-        w_coin = wd.get("coin", "")
+        w_coin = _norm(wd.get("coin", ""))
         w_amt = _dec(wd.get("mnozstvi", "0"))
         w_dt = _dt(wd.get("datum_utc", ""))
         w_burza = wd.get("burza", "")
-
-        found = False
         for dp in deposits:
             if dp.get("id") in matched_d:
                 continue
-            if dp.get("coin", "") != w_coin:
+            if _norm(dp.get("coin", "")) != w_coin:
                 continue
+            if dp.get("burza", "") == w_burza:
+                continue  # same exchange — not a cross-exchange transfer
             d_amt = _dec(dp.get("mnozstvi", "0"))
-            d_dt = _dt(dp.get("datum_utc", ""))
-            d_burza = dp.get("burza", "")
-            if d_burza == w_burza:
-                continue  # same exchange
             diff_amt = abs(w_amt - d_amt)
-            diff_time = d_dt - w_dt
-            if diff_amt <= max(Decimal("0.001"), w_amt * Decimal("0.01")) and timedelta(0) <= diff_time <= timedelta(hours=48):
-                matched_w.add(wd["id"])
-                matched_d.add(dp["id"])
-                found = True
-                break
-        if not found:
-            issues.append(
-                f"WARN: Nespárovaný WITHDRAWAL {w_coin} {w_amt:.8f} dne "
-                f"{wd.get('datum_utc','')[:10]} z {w_burza} (id={wd.get('id')})"
+            # deposit ≈ withdrawal minus the network fee
+            if diff_amt > max(Decimal("0.001"), w_amt * Decimal("0.01")):
+                continue
+            diff_time = _dt(dp.get("datum_utc", "")) - w_dt
+            # deposit normally lands after the withdrawal; allow small clock
+            # skew before, and up to a week after for slow/late recording
+            if not (timedelta(hours=-12) <= diff_time <= timedelta(days=7)):
+                continue
+            candidates.append(
+                (abs(diff_time.total_seconds()), float(diff_amt), wd["id"], dp["id"])
             )
+
+    for _gap, _amt, w_id, d_id in sorted(candidates):
+        if w_id in matched_w or d_id in matched_d:
+            continue
+        matched_w.add(w_id)
+        matched_d.add(d_id)
+
+    issues = []
+    for wd in withdrawals:
+        if wd.get("id") in matched_w:
+            continue
+        issues.append(
+            f"WARN: Nespárovaný WITHDRAWAL {_norm(wd.get('coin',''))} "
+            f"{_dec(wd.get('mnozstvi','0')):.8f} dne {wd.get('datum_utc','')[:10]} "
+            f"z {wd.get('burza','')} (id={wd.get('id')})"
+        )
+    for dp in deposits:
+        if dp.get("id") in matched_d:
+            continue
+        issues.append(
+            f"WARN: Nespárovaný DEPOSIT {_norm(dp.get('coin',''))} "
+            f"{_dec(dp.get('mnozstvi','0')):.8f} dne {dp.get('datum_utc','')[:10]} "
+            f"na {dp.get('burza','')} (id={dp.get('id')}) — možný externí nákup / "
+            f"nedoložený lot, zkontrolujte ručně"
+        )
 
     return issues
 
@@ -262,7 +316,6 @@ def run(
         transfery = list(csv.DictReader(f))
 
     all_issues = []
-    _, final_balance = check_balance(obchody)
     balance_issues, _ = check_balance(obchody)
     all_issues.extend(balance_issues)
     all_issues.extend(check_sale_before_acq(obchody))

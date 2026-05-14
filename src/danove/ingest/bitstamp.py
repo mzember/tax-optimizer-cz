@@ -2,7 +2,8 @@
 
 Header: ID,Account,Type,Subtype,Datetime,Amount,Amount currency,
         Value,Value currency,Rate,Rate currency,Fee,Fee currency,Order ID
-Types:  Market/Buy, Market/Sell, Deposit/, Sub Account Transfer/
+Types:  Market/Buy, Market/Sell, Deposit, Withdrawal
+        Sub Account Transfer = internal Martin↔Main move, skipped (not a real transfer).
 """
 
 import argparse
@@ -83,17 +84,10 @@ def parse_file(path: Path) -> list[dict]:
                     "fee_mnozstvi": str(fee_mnozstvi), "fee_coin": fee_coin,
                     "zdroj_radek": zdroj,
                 })
-            elif "Transfer" in typ:
-                # Sub Account Transfer: log as internal transfer
-                rows.append({
-                    "id": trade_id, "burza": "bitstamp", "datum_utc": datum,
-                    "typ": "WITHDRAWAL" if mnozstvi else "DEPOSIT",
-                    "coin": coin, "mnozstvi": str(mnozstvi),
-                    "protistrana_coin": "", "protistrana_mnozstvi": "0",
-                    "fee_mnozstvi": "0", "fee_coin": "",
-                    "zdroj_radek": zdroj,
-                })
-            # else: unknown type, skip
+            # "Sub Account Transfer" is an internal Martin↔Main move within
+            # Bitstamp — the crypto never leaves the exchange, so it is not a
+            # real deposit/withdrawal and would only pollute transfer matching.
+            # else: Sub Account Transfer / unknown type — skip
 
     return rows
 

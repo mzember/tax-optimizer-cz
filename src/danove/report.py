@@ -143,6 +143,22 @@ def write_md(rows: list[dict], rok: int, path: Path) -> None:
             f.write(f"  _(hrubé straty {c['neosv_hrube_straty']:.2f} Kč"
                     f" snižují základ; zbývá netto {neosv_netto:.2f} Kč)_\n")
         f.write("\n")
+        phantom_rows = [r for r in rows if r.get("lot_id", "").startswith("phantom:")]
+        if phantom_rows:
+            f.write("## Nedoložené nákupy\n\n")
+            f.write("Tyto prodeje nemají doložený dřívější nákup. Jsou zdaněny "
+                    "v plné výši příjmu — nulový náklad, bez nároku na 3-leté "
+                    "osvobození.\n\n")
+            f.write("**Doporučení:** dohledat nákupní doklad k těmto coinům. "
+                    "Doložením se daň sníží — buď se prodej osvobodí (držba 3+ "
+                    "roky od data nákupu), nebo se alespoň započítá nákladová "
+                    "cena a zdaní se jen skutečný zisk.\n\n")
+            f.write("| Datum prodeje | Coin | Množství | Zdaněný příjem CZK |\n")
+            f.write("|---------------|------|----------|--------------------|\n")
+            for r in phantom_rows:
+                f.write(f"| {r['datum_prodeje']} | {r['coin']} | "
+                        f"{r['mnozstvi_z_lotu']} | {r['prijem_czk']} |\n")
+            f.write("\n")
         f.write("## Poznámky\n\n")
         f.write("- Osvobození 100 000 Kč/rok (§4 ZDP) tool **neaplikuje** — zvažte ručně.\n")
         f.write("- Sazba daně (15 % / 23 %) záleží na ostatních příjmech — není v reportu.\n")
@@ -172,6 +188,9 @@ def write_xlsx(rows: list[dict], rok: int, path: Path) -> None:
     exempt_num = wb.add_format({"bg_color": "#C6EFCE", "num_format": "#,##0.00"})
     taxable_num = wb.add_format({"bg_color": "#FFEB9C", "num_format": "#,##0.00"})
     loss_num = wb.add_format({"font_color": "#9C0006", "num_format": "#,##0.00"})
+    phantom_fmt = wb.add_format({"bg_color": "#FFC7CE", "font_color": "#9C0006"})
+    phantom_num = wb.add_format({"bg_color": "#FFC7CE", "font_color": "#9C0006",
+                                 "num_format": "#,##0.00"})
 
     headers_cz = {
         "datum_prodeje": "Datum prodeje",
@@ -194,6 +213,7 @@ def write_xlsx(rows: list[dict], rok: int, path: Path) -> None:
 
     for row_num, r in enumerate(rows, start=1):
         is_exempt = r.get("osvobozeno") == "ano"
+        is_phantom = r.get("lot_id", "").startswith("phantom:")
         zisk = _dec(r.get("zisk_czk", "0"))
         is_loss = zisk < 0
 
@@ -202,14 +222,15 @@ def write_xlsx(rows: list[dict], rok: int, path: Path) -> None:
             if key in num_cols:
                 try:
                     num_val = float(val)
-                    fmt = (exempt_num if is_exempt else
+                    fmt = (phantom_num if is_phantom else
+                           exempt_num if is_exempt else
                            loss_num if (key == "zisk_czk" and is_loss) else
                            taxable_num if not is_exempt else num_fmt)
                     ws.write_number(row_num, col, num_val, fmt)
                 except (ValueError, TypeError):
                     ws.write(row_num, col, val)
             else:
-                fmt = exempt_fmt if is_exempt else None
+                fmt = phantom_fmt if is_phantom else (exempt_fmt if is_exempt else None)
                 ws.write(row_num, col, val, fmt)
 
     # Totals row
@@ -238,6 +259,15 @@ def write_xlsx(rows: list[dict], rok: int, path: Path) -> None:
     bold_warn = wb.add_format({"bold": True, "font_color": "#9C0006"})
     ws.write(sum_row + 4, 0, "Zdanitelný zisk §10 ZDP:", bold_warn)
     ws.write_number(sum_row + 4, 3, zdanitelny_val, bold_warn)
+
+    phantom_rows = [r for r in rows if r.get("lot_id", "").startswith("phantom:")]
+    if phantom_rows:
+        phantom_prijem = sum(_dec(r.get("prijem_czk", "0")) for r in phantom_rows)
+        ws.write(sum_row + 6, 0, "Nedoložené nákupy (phantom):", bold_warn)
+        ws.write_number(sum_row + 6, 3, float(phantom_prijem), bold_warn)
+        ws.write(sum_row + 7, 0,
+                 "→ doložením nákupního dokladu se daň sníží "
+                 "(osvobození 3+ roky nebo započtení nákladu)", warn_fmt)
 
     ws.autofilter(0, 0, len(rows), len(REPORT_HEADER) - 1)
     ws.set_column(0, 0, 14)

@@ -233,44 +233,27 @@ def _solve(
     if not prodeje:
         return []
 
-    # Pre-processing: add phantom lots for coins where total real lots < total sales.
-    # Worst-case assumption: undocumented acquisitions cannot prove 3-year holding →
-    # phantom lots are NEVER exempt. datum_nakupu = sale date (gap = 0 → je_osvobozeno = False).
-    # Each phantom is restricted to its specific sale via phantom_for_sale_id so it cannot
-    # accidentally become exempt by pairing with a later sale.
-    lot_avail: dict[str, Decimal] = defaultdict(Decimal)
-    for lot in loty:
-        lot_avail[lot.coin] += lot.mnozstvi
-
-    sale_demand: dict[str, Decimal] = defaultdict(Decimal)
-    for sale in prodeje:
-        sale_demand[sale.coin] += sale.mnozstvi
-
-    coin_short = {
-        c: sale_demand[c] - lot_avail.get(c, Decimal(0))
-        for c in sale_demand
-        if sale_demand[c] > lot_avail.get(c, Decimal(0))
-    }
-
-    phantom_lots: list[Lot] = []
-    for sale in prodeje:
-        if sale.coin not in coin_short:
-            continue
-        phantom_lots.append(Lot(
+    # Pre-processing: every sale gets its own phantom lot — zero cost basis,
+    # never exempt, restricted to that one sale via phantom_for_sale_id.
+    # The LP only draws on a phantom when real date-compatible lots cannot
+    # cover the sale (a phantom is always the most expensive option tax-wise,
+    # so the LP avoids it otherwise). This guarantees every sale is coverable
+    # and correctly taxes any sale whose earlier purchase is undocumented —
+    # including a sale that chronologically precedes all real lots of its coin
+    # even though that coin has enough lots in total.
+    phantom_lots: list[Lot] = [
+        Lot(
             lot_id=f"phantom:{sale.sale_id}",
             coin=sale.coin,
             datum_nakupu=sale.datum_prodeje,      # gap = 0 → je_osvobozeno = False
-            mnozstvi=sale.mnozstvi,               # enough to cover entire sale if needed
+            mnozstvi=sale.mnozstvi,               # covers the whole sale if needed
             cena_za_kus_czk=Decimal(0),           # no provable cost basis → full proceeds taxable
             fee_czk_total=Decimal(0),
             phantom=True,
             phantom_for_sale_id=sale.sale_id,
-        ))
-
-    for coin, shortage in coin_short.items():
-        print(f"WARN: {coin}: dokumentované loty < predaje (chýba {shortage:.4f} ks) "
-              f"— phantom loty zdanené v plnej výške, bez nároku na 3-ročné oslobodenie",
-              file=sys.stderr)
+        )
+        for sale in prodeje
+    ]
 
     loty = list(loty) + phantom_lots
 
@@ -416,6 +399,18 @@ def _solve(
             c_fix = solver.Constraint(v - tol, v + tol)
             c_fix.SetCoefficient(tax_base[y], 1.0)
 
+        # Tie-break objective: among tax-equal solutions, (a) never draw on a
+        # phantom lot when real lots can cover the sale, (b) otherwise prefer
+        # older lots (FIFO-like stability). days is normalised to [0,1] so the
+        # fixed phantom penalty reliably dominates any FIFO preference — the
+        # most a FIFO swing can gain per unit shifted is 1, and 10 ≫ 1, so an
+        # optional phantom is always re-routed to a real lot. Only phantoms
+        # forced by genuine lack of a date-compatible real lot survive.
+        max_days = max(
+            (prodeje[j].datum_prodeje - loty[i].datum_nakupu).days
+            for i, j in pairs
+        ) or 1
+        PHANTOM_PENALTY = 10.0
         objective2 = solver.Objective()
         for y in years:
             objective2.SetCoefficient(tax_base[y], 0.0)
@@ -423,8 +418,10 @@ def _solve(
             lot = loty[i]
             sale = prodeje[j]
             days = (sale.datum_prodeje - lot.datum_nakupu).days
-            # Negate days: minimize(-days) = prefer larger days = older lots (FIFO)
-            objective2.SetCoefficient(x[(i, j)], float(-days))
+            coef = -days / max_days  # ∈ [-1, 0]: prefer older lots (FIFO)
+            if lot.phantom:
+                coef += PHANTOM_PENALTY
+            objective2.SetCoefficient(x[(i, j)], coef)
         objective2.SetMinimization()
         secondary_status = solver.Solve()
         if secondary_status not in (pywraplp.Solver.OPTIMAL, pywraplp.Solver.FEASIBLE):
@@ -462,6 +459,14 @@ def _solve(
             "osvobozeno": osvobozeno,
             "rok_prodeje": str(sale.rok),
         })
+
+    # Warn about sales drawing on a phantom lot — earlier purchase undocumented.
+    for p in parovani:
+        if p["lot_id"].startswith("phantom:"):
+            print(f"WARN: predaj {p['prodej_id']} ({p['coin']} {p['datum_prodeje']}): "
+                  f"{p['mnozstvi_pouzite']} ks bez doloženého nákupu — zdanené v plnej "
+                  f"výške ({p['prijem_czk']} CZK); doloženie skoršieho nákupu by daň znížilo",
+                  file=sys.stderr)
 
     return parovani
 
