@@ -29,3 +29,8 @@ CZK,CZK,,fiat
 GBP,GBP,,fiat
 CHF,CHF,,fiat
 BTXCRD,BTXCRD,,ignore
+TRX,TRX,tron,crypto
+WIN,WIN,wink,ignore
+JST,JST,just,ignore
+NFT,NFT,,ignore
+TRX-USDT,USDT,tether,stablecoin
