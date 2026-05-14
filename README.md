@@ -1,71 +1,139 @@
-# Daňové přiznání z krypto obchodů (CZ)
+# Krypto daňový report (CZ)
 
-Nástroj pro generování audit-trail reportu k českému daňovému přiznání z krypto obchodů (§10 ZDP).
-Zpracuje historii transakcí z více burz a globálně minimalizuje zdanitelný zisk přes všechny roky
-pomocí lineárního programování (OR-Tools GLOP).
+Nástroj dostane CSV exporty z krypto burz a vygeneruje podklady k českému daňovému přiznání — přehledný Excel s každým prodejem, odkud byl nákupní lot a kolik z toho podléhá dani.
 
-> Vzniklo jako utility pro konkrétního uživatele; zveřejněno pro případné další zájemce.
+Podporované burzy: **Coinmate, Bitstamp, Binance, Bittrex, Bitfinex, Electrum, Atomic Wallet**.
+
+---
 
 ## Instalace
 
 ```bash
-pipx install uv        # pokud uv ještě není
-uv sync --group dev    # nainstaluje vše vč. pytest
+pipx install uv      # správce prostředí, pokud ještě není
+uv sync              # nainstaluje všechny závislosti
 ```
 
 ## Spuštění
 
 ```bash
-make all               # celý pipeline → reporty pro všechny roky
-make build/report_2024.csv   # jen 2024
-make test              # automatizované testy
-make clean             # smaže build/
+# Umístěte CSV exporty z burz do raw_input_data/<nazev_burzy>/
+make all             # spustí celý pipeline, výsledky v build/
 ```
+
+Výstupy jsou v `build/`:
+
+| Soubor | Obsah |
+|--------|-------|
+| `report_2025.xlsx` | Formátovaný Excel — zelené řádky osvobozeny, červené ztráty |
+| `report_2025.md` | Souhrn: zdanitelný zisk, osvobozeno, celkový příjem |
+| `report_2025.csv` | Strojově čitelný audit trail |
+| `kontroly.md` | Varování: nespárované transfery, záporné zůstatky, dust |
+| `audit.md` | Ověření integrity párování lotů |
+
+---
+
+## Jak se párují prodeje s nákupy
+
+Každý nákup krypta vytvoří tzv. **lot** — záznam s datem, množstvím a cenou v Kč. Při prodeji musíte rozhodnout, ze kterého lotu (nebo jejich kombinace) prodáváte. Toto rozhodnutí přímo ovlivňuje výši zdanitelného zisku, protože zisk = příjem − náklad lotu.
+
+**Pravidla, která musí platit vždy:**
+
+- Nákup musí být starší než prodej — nelze prodat coin dřív, než byl nakoupen.
+- Z jednoho lotu nelze prodat víc, než bylo nakoupeno.
+- Jeden prodej může čerpat z více lotů, jeden lot může pokrýt více prodejů.
+- Pokud pro prodej neexistuje žádný doložený nákup, použije se „phantom lot" s nulovou cenou — celý příjem se zdaní. Report na to upozorní a doporučí dohledat doklad.
+
+**Tříletý časový test** (§4 odst. 1 písm. b ZDP): lot nakoupený před více než třemi lety je od daně osvobozen — nezáleží, jaký zisk vygeneruje. Nástroj to automaticky pozná a takové řádky označí jako `osvobozeno = ano`.
+
+```
+datum_prodeje  příjem_CZK  náklad_CZK  zisk_CZK  osvobozeno  datum_nakupu_lotu
+2025-12-17     18 432      4 112        14 320    ano         2019-07-28   ← 6 let držby, nezdaní se
+2025-12-17     231         173          58        ne          2024-08-29   ← 1,5 roku, zdaní se
+```
+
+Do přiznání vstupuje jen součet zisků a ztrát z řádků označených `ne`. Pokud vyjde záporné číslo, základ je nula — ztrátu z krypta nelze odečíst od jiných příjmů (§10 odst. 4 ZDP).
+
+### Proč záleží, který lot přiřadíte
+
+Různá přiřazení dávají různý výsledek. Příklad: na účtu jsou dva loty BTC a v jednom roce proběhnou dva prodeje.
+
+```
+Loty:    Lot A — nakoupeno za 500 000 Kč
+         Lot B — nakoupeno za 1 000 000 Kč
+
+Prodeje: Prodej 1 — za 700 000 Kč  (v roce 2024)
+         Prodej 2 — za 1 200 000 Kč (v roce 2024)
+```
+
+**Varianta 1** — nejdražší lot k prvnímu prodeji:
+
+| Prodej | Lot | Příjem | Náklad | Zisk/ztráta |
+|--------|-----|--------|--------|-------------|
+| Prodej 1 | Lot B (1 000 000) | 700 000 | 1 000 000 | **−300 000** (ztráta) |
+| Prodej 2 | Lot A (500 000)   | 1 200 000 | 500 000 | **+700 000** |
+
+Zdanitelný základ: max(0, −300 000) + 700 000 = **700 000 Kč**
+(ztráta z Prodeje 1 nemůže snížit zisk z Prodeje 2 — jsou to oddělené řádky §10)
+
+**Varianta 2** — obrácené pořadí:
+
+| Prodej | Lot | Příjem | Náklad | Zisk/ztráta |
+|--------|-----|--------|--------|-------------|
+| Prodej 1 | Lot A (500 000)   | 700 000 | 500 000 | **+200 000** |
+| Prodej 2 | Lot B (1 000 000) | 1 200 000 | 1 000 000 | **+200 000** |
+
+Zdanitelný základ: 200 000 + 200 000 = **400 000 Kč**
+
+Rozdíl 300 000 Kč — ze stejných obchodů, jen jiným přiřazením.
+
+### Jak nástroj hledá nejlepší přiřazení
+
+Ruční procházení všech kombinací je při stovkách lotů a prodejů přes více let nereálné. Nástroj formuluje celý problém jako soustavu nerovnic a předá ji solverovi lineárního programování (knihovna OR-Tools), který systematicky prohledá všechny přípustné kombinace a najde tu s nejnižším celkovým zdanitelným ziskem přes všechna léta dohromady.
+
+Důležité omezení: ztrátu z jednoho roku **nelze** přenést do dalšího (§10 ZDP). Kdyby nástroj optimalizoval rok po roce nezávisle, mohl by v roce se ztrátou „spotřebovat" drahé loty, které by jinak mohly snížit zisk v roce ziskovém. Optimalizace přes celé portfolio najednou tomuto problému předchází.
+
+---
 
 ## Pipeline
 
 ```
 raw_input_data/<burza>/*.csv
-    → [ingest]        build/normalized/<burza>.csv
-    → [konsolidace]   build/vsechny_obchody.csv + vsechny_transfery.csv
-    → [obohaceni]     build/obohaceno.csv  (přidá CZK ceny z ČNB + CoinGecko)
-    → [validace]      build/kontroly.md   (chyby + varování)
-    → [optimalizace]  build/parovani.csv  (globální LP přes všechny roky)
-    → [report]        build/report_<rok>.csv + .md + .xlsx
+    → [ingest]       build/normalized/<burza>.csv   (sjednocený formát)
+    → [konsolidace]  build/vsechny_obchody.csv       (všechny burzy dohromady)
+    → [obohacení]    build/obohaceno.csv             (+ CZK ceny z ČNB a CoinGecko)
+    → [validace]     build/kontroly.md               (chyby a varování)
+    → [LP solver]    build/parovani.csv              (globální přiřazení lot → prodej)
+    → [report]       build/report_<rok>.*            (CSV + MD + XLSX)
 ```
 
-Make sleduje mtime — přidáte-li nový soubor do `raw_input_data/`, přepočítají se jen závislé kroky.
+Make sleduje závislosti — přidáte-li nový soubor do `raw_input_data/`, přepočítají se jen ovlivněné kroky.
+
+---
 
 ## Konfigurace
 
-- `config/settings.toml` — kurz CZK (ČNB denní / jednotný) per rok
-- `config/zamknute_roky.toml` — roky již podaných přiznání (LP je nezměni)
-- `config/coin_aliases.csv` — mapování tickerů (XBT→BTC) a CoinGecko ID
-- `config/transferove_mapovani.csv` — ruční párování withdrawal↔deposit mezi burzami
+| Soubor | Účel |
+|--------|------|
+| `config/settings.toml` | Typ kurzu CZK per rok (ČNB denní / jednotný roční) |
+| `config/zamknute_roky.toml` | Roky již podaných přiznání — LP je nezmění |
+| `config/coin_aliases.csv` | Mapování tickerů (XBT→BTC) a CoinGecko ID |
+| `config/transferove_mapovani.csv` | Ruční párování withdrawal↔deposit mezi burzami |
 
-## Jak to funguje — párování lotů
+---
 
-Místo per-rok greedy HIFO řeší **globální lineární program** přes celé datové portfolio:
-- Proměnné `x[lot, prodej]` = kolik jednotek lotu se použije pro daný prodej
-- Loty >3 roky (§4 ZDP časový test) jsou osvobozeny — LP je použije přednostně
-- Zdanitelný zisk = součet `max(0, roční_zisk)` přes všechny roky
-- Ztráta v jednom roce NELZE přenést do dalšího (§10 ZDP ostatní příjmy)
-- LP najde globální optimum, kde HIFO by laciné loty ztratil ve ztrátovém roce
+## Ostatní příkazy
 
-## Výstupy
+```bash
+make test                      # automatizované testy (pytest)
+make build/report_2024.csv     # jen jeden rok
+make clean                     # smaže build/
+```
 
-`build/report_<rok>.xlsx` — formátovaný Excel:
-- Zelené řádky = osvobozeno (časový test 3 roky)
-- Červené hodnoty = záporný zisk
-- Sumární řádek dole
+---
 
-`build/report_<rok>.md` — shrnutí: zdanitelný zisk, osvobozeno, celkový příjem
+## Omezení
 
-`build/report_<rok>.csv` — strojově čitelný audit trail (jeden řádek per disposal-lot pár)
-
-## Výslovné omezení V1
-
-- Staking/mining/airdrops: loguje se, ale nevstupuje do lotů
-- Osvobození 100 000 Kč/rok (§4 ZDP): vypočtena čísla, uplatnění na uživateli
-- Tax sazba (15 % / 23 %): tool počítá zdanitelný zisk, ne daň
-- Cross-exchange transfer matching: heuristický, manuální override přes config
+- **Osvobození 100 000 Kč/rok** (§4 ZDP): tool čísla vypočítá, uplatnění je na uživateli
+- **Sazba daně** (15 % / 23 %): závisí na ostatních příjmech, tool ji nepočítá
+- **Staking, mining, airdropy**: logují se, ale nevstupují do lotů pro optimalizaci
+- **Cross-exchange transfery**: heuristické párování; přesné přiřazení lze upřesnit v `transferove_mapovani.csv`
