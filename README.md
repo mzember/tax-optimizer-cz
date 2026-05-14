@@ -1,8 +1,8 @@
-# Krypto daňový report (CZ)
+# Zdanění kryptoměn: Optimální výpočet (CZ)
 
 Nástroj dostane CSV exporty z krypto burz a vygeneruje podklady k českému daňovému přiznání — přehledný Excel s každým prodejem, odkud byl nákupní lot a kolik z toho podléhá dani.
 
-Podporované burzy: **Coinmate, Bitstamp, Binance, Bittrex, Bitfinex, Electrum, Atomic Wallet**.
+Podporované burzy a peněženky: Coinmate, Bitstamp, Binance, Bittrex, Bitfinex, Electrum, Atomic Wallet.
 
 ---
 
