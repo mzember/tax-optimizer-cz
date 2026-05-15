@@ -1,5 +1,6 @@
 PYTHON := uv run python
-ROKY := 2017 2018 2019 2020 2021 2022 2023 2024 2025 2026
+ROKY := 2023 2024 2025 2026
+ROKY_HISTORIE := 2017 2018 2019 2020 2021 2022
 
 # Note: we depend on the directory, not individual files, to avoid Make's
 # inability to handle spaces in filenames (e.g. "2018btc bittrex fullOrders.csv").
@@ -103,7 +104,23 @@ endef
 
 $(foreach rok,$(ROKY),$(eval $(call REPORT_RULE,$(rok))))
 
-report-vse: build/audit.md $(foreach rok,$(ROKY),build/report_$(rok).csv)
+define REPORT_HISTORIE_RULE
+build/historie/report_$(1).csv build/historie/report_$(1).md build/historie/report_$(1).xlsx: \
+    build/parovani.csv src/danove/report.py
+	@mkdir -p build/historie
+	$(PYTHON) -m danove.report \
+		--vstup build/parovani.csv \
+		--rok $(1) \
+		--vystup-csv build/historie/report_$(1).csv \
+		--vystup-md build/historie/report_$(1).md \
+		--vystup-xlsx build/historie/report_$(1).xlsx
+endef
+
+$(foreach rok,$(ROKY_HISTORIE),$(eval $(call REPORT_HISTORIE_RULE,$(rok))))
+
+report-vse: build/audit.md \
+    $(foreach rok,$(ROKY),build/report_$(rok).csv) \
+    $(foreach rok,$(ROKY_HISTORIE),build/historie/report_$(rok).csv)
 
 test:
 	uv run pytest -v

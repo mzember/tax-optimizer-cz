@@ -63,13 +63,16 @@ def _make_sale(sid, coin, prodej_date, mnozstvi, prijem):
 
 
 def _total_zdanitelny(parovani):
-    total = Decimal("0")
+    """Tax base across all years using netting within §10 ZDP:
+    base[y] = max(0, Σ all non-exempt zisk in y). Per [[netting-vyklad-10]].
+    """
+    per_year: dict[int, Decimal] = {}
     for p in parovani:
-        if p["osvobozeno"] == "ne":
-            zisk = Decimal(p["zisk_czk"])
-            if zisk > 0:
-                total += zisk
-    return total
+        if p["osvobozeno"] != "ne":
+            continue
+        y = int(p["rok_prodeje"])
+        per_year[y] = per_year.get(y, Decimal("0")) + Decimal(p["zisk_czk"])
+    return sum((max(Decimal("0"), v) for v in per_year.values()), Decimal("0"))
 
 
 def test_lp_beats_hifo_s2():

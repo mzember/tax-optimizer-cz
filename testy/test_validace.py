@@ -21,12 +21,14 @@ def _row(typ, coin, mnozstvi, proto="CZK", proto_mnozstvi="0", datum="2024-01-01
 
 
 def test_negative_balance_detected():
+    """Oversell musí byť hlášen (WARN — phantom lot to v optimalizaci ošetří)."""
     rows = [
         _row("NAKUP", "BTC", "1.0", rid="r1", datum="2020-01-01T00:00:00Z"),
         _row("PRODEJ", "BTC", "2.0", rid="r2", datum="2024-01-01T00:00:00Z"),  # oversell
     ]
-    issues, _ = check_balance(rows)
-    assert any("ERROR" in i and "BTC" in i for i in issues)
+    issues, balance = check_balance(rows)
+    assert any("WARN" in i and "BTC" in i for i in issues)
+    assert balance["BTC"] < 0
 
 
 def test_valid_trades_no_error():
@@ -40,11 +42,14 @@ def test_valid_trades_no_error():
 
 
 def test_sale_before_acquisition():
+    """PRODEJ bez předchozího NAKUP je WARN, ne ERROR — phantom lot v
+    optimalizaci to zdaní v plné výši, takže pipeline nesmí padnout."""
     rows = [
         _row("PRODEJ", "ETH", "1.0", rid="r1", datum="2020-01-01T00:00:00Z"),
     ]
     issues = check_sale_before_acq(rows)
-    assert any("ERROR" in i and "ETH" in i for i in issues)
+    assert any("WARN" in i and "ETH" in i for i in issues)
+    assert all("ERROR" not in i for i in issues)
 
 
 def test_duplicate_id():

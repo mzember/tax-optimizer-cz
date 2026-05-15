@@ -227,8 +227,16 @@ def _solve(
     prodeje: list[Sale],
     locked: dict[tuple, Decimal],
     zamknute_roky: list[int],
+    od_roku: int | None = None,
 ) -> list[dict]:
-    """Run GLOP LP and return parovani rows."""
+    """Run GLOP LP and return parovani rows.
+
+    `od_roku` gates which years contribute to the primary objective:
+    tax_base[y] has coefficient 1.0 iff y >= od_roku, else 0.0. Pre-od_roku
+    sales are still allocated (so their lots are reserved correctly), but
+    LP is free to push tax burden onto those years — they're promlčané.
+    Default `None` = all years count (used by tests).
+    """
 
     if not prodeje:
         return []
@@ -370,10 +378,13 @@ def _solve(
         tc.SetCoefficient(tax_base[y], 1.0)
         tc.SetCoefficient(gain[y], -1.0)
 
-    # Objective: minimize Σ tax_base[y]
+    # Objective: minimize Σ tax_base[y] for y >= od_roku (older years are
+    # promlčené — pre-od_roku tax base is informational only and must not
+    # bias allocation of lots that could reduce tax in optimised years).
     objective = solver.Objective()
     for y in years:
-        objective.SetCoefficient(tax_base[y], 1.0)
+        coef = 1.0 if (od_roku is None or y >= od_roku) else 0.0
+        objective.SetCoefficient(tax_base[y], coef)
     objective.SetMinimization()
 
     status = solver.Solve()
@@ -491,41 +502,17 @@ def run(
 
     loty, prodeje = _load_enriched(vstup)
 
-    # Filter sales to optimized years only (earlier years are statute-of-limitations or already filed)
-    prodeje_opt = [s for s in prodeje if s.rok >= od_roku]
-    pre_prodeje = [s for s in prodeje if s.rok < od_roku]
-    vyrazeno = len(pre_prodeje)
-    if vyrazeno:
-        print(f"optimalizace: přeskočeno {vyrazeno} prodejů před rokem {od_roku} (promlčené/podané)",
-              file=sys.stderr)
-
-    # Subtract pre-od_roku lot consumption so LP cannot reuse already-disposed lots
-    if pre_prodeje:
-        pre_consumed = _greedy_consume(loty, pre_prodeje)
-        loty_residual = []
-        plne_spotrebovano = 0
-        for lot in loty:
-            used = pre_consumed.get(lot.lot_id, Decimal(0))
-            residual = lot.mnozstvi - used
-            if residual > Decimal("1e-9"):
-                # Proportionally reduce fee so fee/unit stays constant → prevents
-                # LP numerical overflow when residual is near-zero (e.g. 1 satoshi).
-                fee_residual = (
-                    lot.fee_czk_total * residual / lot.mnozstvi
-                    if lot.mnozstvi > 0 else Decimal(0)
-                )
-                loty_residual.append(lot._replace(mnozstvi=residual, fee_czk_total=fee_residual))
-            else:
-                plne_spotrebovano += 1
-        if plne_spotrebovano:
-            print(f"optimalizace: {plne_spotrebovano} lotů plně spotřebováno před {od_roku} — vyřazeno z LP",
-                  file=sys.stderr)
-        loty = loty_residual
-
-    print(f"optimalizace: {len(loty)} lotů, {len(prodeje_opt)} prodejů ({od_roku}+), "
+    # LP gets ALL sales (pre- and post-od_roku) and decides allocation
+    # globally — older years contribute nothing to the objective, so the LP
+    # cannot pay tax in optimised years to "save" promlčaný rok. Pre-od_roku
+    # pairings exist purely so older years' lots aren't double-used.
+    opt_count = sum(1 for s in prodeje if s.rok >= od_roku)
+    pre_count = len(prodeje) - opt_count
+    print(f"optimalizace: {len(loty)} lotů, {len(prodeje)} prodejů "
+          f"(OFICIÁLNE {od_roku}+: {opt_count}, info <{od_roku}: {pre_count}), "
           f"zamčené roky: {zamknute_roky}", file=sys.stderr)
 
-    parovani = _solve(loty, prodeje_opt, locked, zamknute_roky)
+    parovani = _solve(loty, prodeje, locked, zamknute_roky, od_roku=od_roku)
 
     vystup.parent.mkdir(parents=True, exist_ok=True)
     with vystup.open("w", newline="", encoding="utf-8") as f:
@@ -549,7 +536,8 @@ def run(
     for y in sorted(roky):
         r = roky[y]
         zdanitelny = max(Decimal("0"), r["neosv_netto"])
-        print(f"  {y}: zdanitelný zisk {zdanitelny:.2f} CZK "
+        label = "OFICIÁLNE" if y >= od_roku else "info"
+        print(f"  {y} [{label}]: zdanitelný zisk {zdanitelny:.2f} CZK "
               f"(neosvobozené netto {r['neosv_netto']:.2f} CZK), "
               f"osvobozeno {r['osvobozeno_zisk']:.2f} CZK", file=sys.stderr)
     print(f"\nParování: {len(parovani)} řádků → {vystup}", file=sys.stderr)

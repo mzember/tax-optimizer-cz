@@ -1,18 +1,18 @@
 """Post-pairing audit: verifies parovani.csv against the full lot history.
 
-Reads build/obohaceno.csv and build/parovani.csv. Simulates pre-od_roku
-sales via greedy HIFO to estimate historical lot consumption, then checks
-LP assignments for consistency.
+Reads build/obohaceno.csv and build/parovani.csv. LP allocates lots across
+all years (older years are informational), so the audit just checks that
+each lot's LP allocation does not exceed its quantity and each sale is
+fully covered.
 
 Error codes:
-  LOT_OVERAGE   lot allocated more than its original quantity (pre+LP combined)
+  LOT_OVERAGE   lot allocated more than its original quantity
   BEFORE_BUY    lot acquired after the disposal date
   SALE_GAP      sale not fully covered in parovani
+  ARITH_ERR     příjem - náklad ≠ zisk (tolerance 0.01 Kč)
 
 Warning codes:
   WRONG_EXEMPT  osvobozeno flag inconsistent with 3-year test
-  PRE_UNCOVERED pre-od_roku sale could not be fully covered by existing lots
-                (explains why phantom lots appear in the optimised years)
 """
 
 import argparse
@@ -23,7 +23,7 @@ from datetime import date
 from decimal import Decimal
 from pathlib import Path
 
-from danove.optimalizace import Lot, Sale, _load_enriched, _greedy_consume
+from danove.optimalizace import Lot, _load_enriched
 from danove.util import coin as coin_util
 from danove.util.datum import je_osvobozeno
 
@@ -57,44 +57,10 @@ def run(parovani_path: Path, obchody_path: Path, vystup_path: Path,
     loty, prodeje = _load_enriched(obchody_path)
 
     lots_by_id: dict[str, Lot] = {lot.lot_id: lot for lot in loty}
-    pre_prodeje = [s for s in prodeje if s.rok < od_roku]
-    opt_prodeje = [s for s in prodeje if s.rok >= od_roku]
+    pre_count = sum(1 for s in prodeje if s.rok < od_roku)
+    opt_count = sum(1 for s in prodeje if s.rok >= od_roku)
 
-    # ── Step 1: simulate pre-od_roku HIFO consumption ────────────────────────
-    pre_consumed = _greedy_consume(loty, pre_prodeje)
-
-    # Also track which pre-sales were not fully coverable
-    remaining_after_pre: dict[str, Decimal] = {
-        lot.lot_id: lot.mnozstvi - pre_consumed.get(lot.lot_id, Decimal(0))
-        for lot in loty
-    }
-    lots_by_coin_pre: dict[str, list[Lot]] = defaultdict(list)
-    for lot in loty:
-        lots_by_coin_pre[lot.coin].append(lot)
-
-    pre_uncovered: list[dict] = []
-    temp_remaining = {lot.lot_id: lot.mnozstvi for lot in loty}
-    for sale in sorted(pre_prodeje, key=lambda s: s.datum_prodeje):
-        need = sale.mnozstvi
-        for lot in sorted(
-            [l for l in lots_by_coin_pre[sale.coin]
-             if l.datum_nakupu <= sale.datum_prodeje and temp_remaining[l.lot_id] > EPSILON],
-            key=lambda l: (0 if je_osvobozeno(l.datum_nakupu, sale.datum_prodeje) else 1,
-                           -l.cena_za_kus_czk)
-        ):
-            if need <= EPSILON:
-                break
-            use = min(need, temp_remaining[lot.lot_id])
-            temp_remaining[lot.lot_id] -= use
-            need -= use
-        if need > EPSILON:
-            pre_uncovered.append({
-                "sale_id": sale.sale_id, "coin": sale.coin,
-                "datum": sale.datum_prodeje.isoformat(),
-                "rok": sale.rok, "chybi": str(need.quantize(Decimal("0.00000001"))),
-            })
-
-    # ── Step 2: load LP pairings ─────────────────────────────────────────────
+    # ── Load LP pairings ─────────────────────────────────────────────────────
     parovani = _load_parovani(parovani_path)
 
     lp_by_lot: dict[str, Decimal] = defaultdict(Decimal)
@@ -107,17 +73,14 @@ def run(parovani_path: Path, obchody_path: Path, vystup_path: Path,
     # ── Check 1: LOT_OVERAGE ─────────────────────────────────────────────────
     lot_overage: list[dict] = []
     for lot in loty:
-        pre = pre_consumed.get(lot.lot_id, Decimal(0))
         lp = lp_by_lot.get(lot.lot_id, Decimal(0))
-        total = pre + lp
-        if total > lot.mnozstvi + EPSILON:
+        if lp > lot.mnozstvi + EPSILON:
             lot_overage.append({
                 "lot_id": lot.lot_id, "coin": lot.coin,
                 "datum_nakupu": lot.datum_nakupu.isoformat(),
                 "original": str(lot.mnozstvi),
-                "pre_spotrebovano": str(pre.quantize(Decimal("0.00000001"))),
                 "lp_prideleno": str(lp.quantize(Decimal("0.00000001"))),
-                "prebytek": str((total - lot.mnozstvi).quantize(Decimal("0.00000001"))),
+                "prebytek": str((lp - lot.mnozstvi).quantize(Decimal("0.00000001"))),
             })
 
     # ── Check 2: BEFORE_BUY ──────────────────────────────────────────────────
@@ -139,8 +102,8 @@ def run(parovani_path: Path, obchody_path: Path, vystup_path: Path,
 
     # ── Check 3: SALE_GAP ────────────────────────────────────────────────────
     sale_gap: list[dict] = []
-    opt_sale_map = {s.sale_id: s for s in opt_prodeje}
-    for sale_id, sale in opt_sale_map.items():
+    sale_map = {s.sale_id: s for s in prodeje}
+    for sale_id, sale in sale_map.items():
         covered = lp_coverage.get(sale_id, Decimal(0))
         gap = sale.mnozstvi - covered
         if gap > EPSILON:
@@ -190,15 +153,15 @@ def run(parovani_path: Path, obchody_path: Path, vystup_path: Path,
 
     # ── Write report ─────────────────────────────────────────────────────────
     n_err = len(lot_overage) + len(before_buy) + len(sale_gap) + len(arith_err)
-    n_warn = len(wrong_exempt) + len(pre_uncovered)
+    n_warn = len(wrong_exempt)
 
     lines: list[str] = [
         "# Audit párování lotů",
         "",
         f"**Chyby: {n_err}** | **Varování: {n_warn}**",
         "",
-        f"Pre-{od_roku} prodeje: {len(pre_prodeje)} (simulováno greedy HIFO, ne skutečné podané párování)",
-        f"LP prodeje ({od_roku}+): {len(opt_prodeje)}",
+        f"Sales celkom: {len(prodeje)} "
+        f"(OFICIÁLNE {od_roku}+: {opt_count}, info <{od_roku}: {pre_count})",
         f"LP řádků párování: {len(parovani)}",
         "",
     ]
@@ -225,14 +188,13 @@ def run(parovani_path: Path, obchody_path: Path, vystup_path: Path,
             lines += [
                 "## ERR: LOT_OVERAGE — lot použit více než dostupné množství",
                 "",
-                "| lot_id | coin | datum_nakupu | original | pre-2023 (HIFO est.) | LP přiděleno | přebytek |",
-                "|--------|------|--------------|----------|----------------------|--------------|----------|",
+                "| lot_id | coin | datum_nakupu | original | LP přiděleno | přebytek |",
+                "|--------|------|--------------|----------|--------------|----------|",
             ]
             for e in lot_overage:
                 lines.append(
                     f"| `{e['lot_id']}` | {e['coin']} | {e['datum_nakupu']} "
-                    f"| {e['original']} | {e['pre_spotrebovano']} "
-                    f"| {e['lp_prideleno']} | **{e['prebytek']}** |"
+                    f"| {e['original']} | {e['lp_prideleno']} | **{e['prebytek']}** |"
                 )
             lines.append("")
 
@@ -276,21 +238,6 @@ def run(parovani_path: Path, obchody_path: Path, vystup_path: Path,
                     f"| `{w['prodej_id']}` | `{w['lot_id']}` | {w['coin']} "
                     f"| {w['datum_nakupu']} | {w['datum_prodeje']} "
                     f"| {w['v_parovani']} | **{w['spravne']}** |"
-                )
-            lines.append("")
-
-        if pre_uncovered:
-            lines += [
-                f"## WARN: PRE_UNCOVERED — pre-{od_roku} prodej nepokrytý loty",
-                "(Vysvětluje výskyt phantom lotů v optimalizovaných letech.)",
-                "",
-                "| sale_id | coin | datum | rok | chybí |",
-                "|---------|------|-------|-----|-------|",
-            ]
-            for w in pre_uncovered:
-                lines.append(
-                    f"| `{w['sale_id']}` | {w['coin']} | {w['datum']} "
-                    f"| {w['rok']} | {w['chybi']} |"
                 )
             lines.append("")
 

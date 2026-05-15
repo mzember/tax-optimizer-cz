@@ -1,13 +1,15 @@
 """Integrity testy reportů: aritmetika, časový test, konzistence CSV⟷MD.
 
-Checks applied to every build/report_{rok}.csv:
+Checks applied to every report_{rok}.csv in build/ AND build/historie/:
   1. ARITHMETIC  příjem - náklad == zisk  (per řádek, tolerance 0.01 Kč)
   2. EXEMPT_ANO  osvobozeno=ano → nakup+3 roky < prodej  (je_osvobozeno=True)
   3. EXEMPT_NE   osvobozeno=ne  → nakup+3 roky ≥ prodej  (je_osvobozeno=False)
   4. NON_NEG     zdanitelný základ §10 ZDP ≥ 0 (ztrátu nelze odečíst)
   5. CSV_MD_SYNC součty CSV se shodují s čísly v .md reportu (tolerance 0.02 Kč)
 
-Testy jsou přeskočeny, pokud soubor neexistuje (build ještě neběžel).
+Roky pred --od-roku 2023 (historie) sa testujú rovnako — chytáme bugy, ktoré
+by sa inak nezistili. Testy sú zobrazené v parametrizácii len ak reálne
+existuje neprázdny CSV (žiadne SKIPy).
 """
 
 import csv
@@ -21,20 +23,34 @@ import pytest
 from danove.util.datum import je_osvobozeno
 
 BUILD_DIR = Path(__file__).parent.parent / "build"
-ROKY = list(range(2017, 2028))
+
+
+def _discover_reports() -> list[tuple[int, Path]]:
+    """Najdi (rok, cesta) pre každý neprázdný report CSV — oficiálne aj historie."""
+    found: list[tuple[int, Path]] = []
+    if not BUILD_DIR.exists():
+        return found
+    paths = sorted(BUILD_DIR.glob("report_*.csv")) + \
+            sorted((BUILD_DIR / "historie").glob("report_*.csv"))
+    for p in paths:
+        try:
+            rok = int(p.stem.removeprefix("report_"))
+        except ValueError:
+            continue
+        with p.open(encoding="utf-8") as f:
+            if any(csv.DictReader(f)):
+                found.append((rok, p))
+    return found
+
+
+REPORTY = _discover_reports()
 
 
 # ── Helpers ───────────────────────────────────────────────────────────────────
 
-def _rows(rok: int) -> list[dict]:
-    path = BUILD_DIR / f"report_{rok}.csv"
-    if not path.exists():
-        pytest.skip(f"build/report_{rok}.csv neexistuje")
-    with path.open(encoding="utf-8") as f:
-        rows = list(csv.DictReader(f))
-    if not rows:
-        pytest.skip(f"report_{rok}.csv je prázdný")
-    return rows
+def _rows(csv_path: Path) -> list[dict]:
+    with csv_path.open(encoding="utf-8") as f:
+        return list(csv.DictReader(f))
 
 
 def _d(s: str) -> date:
@@ -53,10 +69,10 @@ def _zdanitelny(rows: list[dict]) -> Decimal:
 
 # ── Tests ─────────────────────────────────────────────────────────────────────
 
-@pytest.mark.parametrize("rok", ROKY)
-def test_aritmetika(rok):
+@pytest.mark.parametrize("rok,csv_path", REPORTY)
+def test_aritmetika(rok, csv_path):
     """Každý řádek: abs(příjem - náklad - zisk) < 0.01 Kč."""
-    for r in _rows(rok):
+    for r in _rows(csv_path):
         diff = abs(_dec(r["prijem_czk"]) - _dec(r["naklad_czk"]) - _dec(r["zisk_czk"]))
         assert diff < Decimal("0.01"), (
             f"{rok} {r['datum_prodeje']} lot={r['lot_id']}: "
@@ -64,10 +80,10 @@ def test_aritmetika(rok):
         )
 
 
-@pytest.mark.parametrize("rok", ROKY)
-def test_osvobozenost_ano(rok):
+@pytest.mark.parametrize("rok,csv_path", REPORTY)
+def test_osvobozenost_ano(rok, csv_path):
     """Osvobozeno=ano → nakup + 3 roky < prodej (přesný kalendářní test §4 ZDP)."""
-    for r in _rows(rok):
+    for r in _rows(csv_path):
         if r["osvobozeno"] != "ano":
             continue
         nakup = _d(r["datum_nakupu_lotu"])
@@ -78,10 +94,10 @@ def test_osvobozenost_ano(rok):
         )
 
 
-@pytest.mark.parametrize("rok", ROKY)
-def test_osvobozenost_ne(rok):
+@pytest.mark.parametrize("rok,csv_path", REPORTY)
+def test_osvobozenost_ne(rok, csv_path):
     """Osvobozeno=ne → nakup + 3 roky ≥ prodej (žádná chybně nezdaněná položka)."""
-    for r in _rows(rok):
+    for r in _rows(csv_path):
         if r["osvobozeno"] != "ne":
             continue
         nakup = _d(r["datum_nakupu_lotu"])
@@ -92,20 +108,19 @@ def test_osvobozenost_ne(rok):
         )
 
 
-@pytest.mark.parametrize("rok", ROKY)
-def test_zdanitelny_nezaporny(rok):
+@pytest.mark.parametrize("rok,csv_path", REPORTY)
+def test_zdanitelny_nezaporny(rok, csv_path):
     """Zdanitelný základ §10 ZDP musí být ≥ 0 (ztrátu nelze odečíst z jiných příjmů)."""
-    assert _zdanitelny(_rows(rok)) >= Decimal("0")
+    assert _zdanitelny(_rows(csv_path)) >= Decimal("0")
 
 
-@pytest.mark.parametrize("rok", ROKY)
-def test_csv_md_soucty(rok):
+@pytest.mark.parametrize("rok,csv_path", REPORTY)
+def test_csv_md_soucty(rok, csv_path):
     """Součty vypočtené z CSV se shodují s čísly uvedenými v .md reportu (tolerance 0.02 Kč)."""
-    md_path = BUILD_DIR / f"report_{rok}.md"
-    if not md_path.exists():
-        pytest.skip(f"build/report_{rok}.md neexistuje")
+    md_path = csv_path.with_suffix(".md")
+    assert md_path.exists(), f"{md_path} chybí, ale CSV existuje"
 
-    rows = _rows(rok)
+    rows = _rows(csv_path)
     md = md_path.read_text(encoding="utf-8")
     TOL = Decimal("0.02")
 
