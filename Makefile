@@ -118,8 +118,21 @@ endef
 
 $(foreach rok,$(ROKY_HISTORIE),$(eval $(call REPORT_HISTORIE_RULE,$(rok))))
 
+define ZOSTATOK_RULE
+build/zostatok_$(1).md: build/parovani.csv build/obohaceno.csv src/danove/zostatok.py
+	$(PYTHON) -m danove.zostatok \
+		--obchody build/obohaceno.csv \
+		--parovani build/parovani.csv \
+		--vystup $$@ \
+		--config config/settings.toml \
+		--rok $(1)
+endef
+
+$(foreach rok,$(ROKY),$(eval $(call ZOSTATOK_RULE,$(rok))))
+
 report-vse: build/audit.md \
     $(foreach rok,$(ROKY),build/report_$(rok).csv) \
+    $(foreach rok,$(ROKY),build/zostatok_$(rok).md) \
     $(foreach rok,$(ROKY_HISTORIE),build/historie/report_$(rok).csv)
 
 test:

@@ -1,0 +1,16 @@
+withdraw_id,deposit_id,poznamka
+# Mapovanie interných transferov burza → peňaženka (alebo burza → burza), ktoré
+# automatika vo validace.py nevie spárovať sama (rozdielne timestampy, fee,
+# viac výberov za sebou). Spárované páry pipeline považuje za vnútorný presun
+# (žiadne zdanenie), nie za predaj/nákup.
+#
+# Formát ID: "<zdroj>:<id>".
+#   - burza: "coinmate:12345678", "bitstamp:87654321" — interné withdraw/deposit ID.
+#   - peňaženka: "electrum:<txid>" — Bitcoin transaction ID (64 hex znakov).
+#
+# POZOR: txid je verejný na blockchaine. Súbor obsahuje väzbu burza ↔ peňaženka
+# a preto je v .gitignore. Skopírujte ako transferove_mapovani.csv a doplňte
+# vlastné mapovania.
+#
+# Príklad (txid je 64-hex; tu len placeholder):
+# coinmate:12345678,electrum:<txid>,coinmate→cold wallet

@@ -13,6 +13,7 @@ data/
 # súkromné konfigurácie (verejné sú *.example.* varianty)
 config/vyloucene_transakce.txt
 config/zamknute_roky.toml
+config/transferove_mapovani.csv
 
 # interné súbory Claude Code
 .claude/
