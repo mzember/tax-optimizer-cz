@@ -17,7 +17,7 @@ Uživatel potřebuje audit-trail nástroj pro české daňové přiznání z kry
 | 5 | Lock-in již podaných let        | `config/zamknute_roky.toml` přidá hard constraints — historické párování se nezmění |
 | 6 | Sazba daně                      | Tool ji nepočítá; vrací zdanitelný zisk per rok                          |
 | 7 | Scope non-trade                 | Loguje se, ale neovlivňuje optimalizaci. Heuristika withdraw↔deposit běží v validaci |
-| 8 | 100 000 Kč osvobození           | Tool ignoruje, jen poznámka v reportu                                    |
+| 8 | 100 000 Kč osvobození (§4 zj)   | Auto-aplikované od r. 2025 (cliff na úhrn príjmov; pre <2025 sekcia v reporte chýba) |
 | 9 | Build                           | GNU Makefile (každý stupeň = `uv run python -m danove.<modul>`)          |
 | 10| Fee                             | Při nákupu → zvyšuje cost basis lotu; při prodeji → snižuje proceeds; fee v krypto přepočet přes CoinGecko |
 | 11| Cena pro crypto↔crypto          | CoinGecko historical (cache v DuckDB), USD→CZK přes ČNB                  |
@@ -212,7 +212,7 @@ Sloupec `osvobozeno` má hodnotu `ano` (časový test 3 roky) nebo `ne`.
 - Lock-in roky: …
 
 ## Poznámky
-- Osvobození 100 000 Kč/rok (§4 ZDP) tool neaplikuje — zvažte ručně.
+- §4 zj (úhrn ≤ 100 000 Kč) tool aplikuje automaticky od r. 2025.
 - Sazba daně (15 % / 23 %) není v reportu — záleží na ostatních příjmech.
 - Validační report: build/kontroly.md (X warningů, Y errors).
 ```
@@ -395,7 +395,6 @@ CZK,CZK,,fiat
 ## Otevřené body (vědomě V1 nedělá)
 
 - Tax brackety 15/23 % (vyžaduje další uživatelský config + MIP s indikátory)
-- 100 000 Kč osvobození (jen poznámka)
 - Mining/staking/airdrop/fork (jen log v `vsechny_transfery.csv`)
 - PDF příloha
 - Crypto-to-fiat fee disposal optimalizace přes různé burzy (fee má vlastní cost-basis implikace pokud fee_coin = BNB s vlastní historií)

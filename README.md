@@ -132,7 +132,7 @@ make clean                     # smaže build/
 
 ## Omezení
 
-- **Osvobození 100 000 Kč/rok** (§4 ZDP): tool čísla vypočítá, uplatnění je na uživateli
+- **§4 ZDP osvobození**: časový test 3 roky (§4 ods. 1 písm. zk) a 100 000 Kč úhrn príjmov z prevodu krypto-aktiv (§4 ods. 1 písm. zj, od r. 2025) tool aplikuje automaticky.
 - **Sazba daně** (15 % / 23 %): závisí na ostatních příjmech, tool ji nepočítá
 - **Staking, mining, airdropy**: logují se, ale nevstupují do lotů pro optimalizaci
 - **Cross-exchange transfery**: heuristické párování; přesné přiřazení lze upřesnit v `transferove_mapovani.csv`
