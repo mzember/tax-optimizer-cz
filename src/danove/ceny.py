@@ -5,6 +5,7 @@ Entry point: ziskej_cenu_czk(coin, datum) -> Decimal
 """
 
 import json
+import os
 import sys
 import time
 from datetime import date, timedelta
@@ -124,20 +125,37 @@ def ziskej_kurz_cnb(mena: str, d: date) -> Decimal:
 
 
 # ── CryptoCompare ─────────────────────────────────────────────────────────────
-# Free public API, no key required, rate limit ~100 req/min.
+# Historical daily close. Since 2025 the min-api requires an API key (free tier
+# available at developers.coindesk.com) — pass it via env CRYPTOCOMPARE_API_KEY.
+# Without a key the endpoint answers 401; we then degrade to "cena chybí"
+# (obohaceni falls back to the counterparty price / WARN) instead of aborting.
 # Endpoint: /data/pricehistorical?fsym=BTC&tsyms=USD&ts=<unix>
 
+_cc_unavailable = False  # set after the first hard HTTP failure → skip further calls this run
+
+
 def _fetch_cryptocompare(ticker: str, d: date) -> float | None:
+    global _cc_unavailable
+    if _cc_unavailable:
+        return None
     import calendar
     ts = int(calendar.timegm(d.timetuple()))
     url = (
         f"https://min-api.cryptocompare.com/data/pricehistorical"
         f"?fsym={ticker.upper()}&tsyms=USD&ts={ts}"
     )
+    api_key = os.environ.get("CRYPTOCOMPARE_API_KEY")
+    if api_key:
+        url += f"&api_key={api_key}"
     try:
         data = json.loads(http_util.get(url).decode("utf-8"))
         return float(data[ticker.upper()]["USD"])
     except (KeyError, json.JSONDecodeError, TypeError):
+        return None
+    except RuntimeError as e:
+        _cc_unavailable = True
+        print(f"WARN: CryptoCompare nedostupný ({e}); chybějící ceny se v tomto běhu "
+              f"nedoplní — nastavte CRYPTOCOMPARE_API_KEY", file=sys.stderr)
         return None
 
 

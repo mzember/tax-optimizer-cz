@@ -4,7 +4,10 @@ Delimiter: semicolon. Two variants:
   v1: ID;Datum;Typ;Částka;Částka měny;Cena;Cena měny;Poplatek;Poplatek měny;Celkem;Celkem měny;...
   v2: ID;Datum;Účet;Typ;Částka;... (extra Účet column)
 
-Types: BUY, SELL, WITHDRAWAL, QUICK_BUY, QUICK_SELL, DEPOSIT
+Types: BUY, SELL, QUICK_BUY, QUICK_SELL, MARKET_BUY, MARKET_SELL, DEPOSIT, WITHDRAWAL
+       DEBIT/CREDIT = interní korekce Coinmate (bez ceny) → WITHDRAWAL/DEPOSIT + WARN,
+       aby šly dohledat a případně vyloučit v config/vyloucene_transakce.txt.
+       Jiný neznámý typ → WARN (nikdy se nesmí tiše zahodit).
 Cena = price per unit of Částka měny (in Cena měny)
 protistrana_mnozstvi = |Cena| * |Částka| (gross, before fee)
 """
@@ -20,6 +23,10 @@ NORMALIZED_HEADER = [
     "protistrana_coin", "protistrana_mnozstvi",
     "fee_mnozstvi", "fee_coin", "zdroj_radek",
 ]
+
+
+BUY_TYPY = {"BUY", "QUICK_BUY", "MARKET_BUY"}
+SELL_TYPY = {"SELL", "QUICK_SELL", "MARKET_SELL"}
 
 
 def _dec(s: str) -> Decimal:
@@ -99,7 +106,7 @@ def parse_file(path: Path) -> list[dict]:
             # gross proceeds/cost = price * quantity
             proto_mnozstvi = cena * castka
 
-            if typ_raw in ("BUY", "QUICK_BUY"):
+            if typ_raw in BUY_TYPY:
                 rows.append({
                     "id": rid, "burza": "coinmate", "datum_utc": datum,
                     "typ": "NAKUP", "coin": coin, "mnozstvi": str(castka),
@@ -108,7 +115,7 @@ def parse_file(path: Path) -> list[dict]:
                     "fee_mnozstvi": str(poplatek), "fee_coin": poplatek_meny,
                     "zdroj_radek": zdroj,
                 })
-            elif typ_raw in ("SELL", "QUICK_SELL"):
+            elif typ_raw in SELL_TYPY:
                 rows.append({
                     "id": rid, "burza": "coinmate", "datum_utc": datum,
                     "typ": "PRODEJ", "coin": coin, "mnozstvi": str(castka),
@@ -117,7 +124,10 @@ def parse_file(path: Path) -> list[dict]:
                     "fee_mnozstvi": str(poplatek), "fee_coin": poplatek_meny,
                     "zdroj_radek": zdroj,
                 })
-            elif typ_raw == "WITHDRAWAL":
+            elif typ_raw in ("WITHDRAWAL", "DEBIT"):
+                if typ_raw == "DEBIT":
+                    print(f"WARN: coinmate DEBIT (interní korekce) {castka} {coin} dne {datum} — "
+                          f"id={rid}, zkontrolujte ručně", file=sys.stderr)
                 rows.append({
                     "id": rid, "burza": "coinmate", "datum_utc": datum,
                     "typ": "WITHDRAWAL", "coin": coin, "mnozstvi": str(castka),
@@ -125,7 +135,10 @@ def parse_file(path: Path) -> list[dict]:
                     "fee_mnozstvi": str(poplatek), "fee_coin": poplatek_meny,
                     "zdroj_radek": zdroj,
                 })
-            elif typ_raw == "DEPOSIT":
+            elif typ_raw in ("DEPOSIT", "CREDIT"):
+                if typ_raw == "CREDIT":
+                    print(f"WARN: coinmate CREDIT (interní korekce) {castka} {coin} dne {datum} — "
+                          f"id={rid}, zkontrolujte ručně", file=sys.stderr)
                 rows.append({
                     "id": rid, "burza": "coinmate", "datum_utc": datum,
                     "typ": "DEPOSIT", "coin": coin, "mnozstvi": str(castka),
@@ -133,6 +146,9 @@ def parse_file(path: Path) -> list[dict]:
                     "fee_mnozstvi": "0", "fee_coin": "",
                     "zdroj_radek": zdroj,
                 })
+            else:
+                print(f"WARN: coinmate neznámý typ {typ_raw!r} ({castka} {coin} dne {datum}, "
+                      f"id={rid}) — řádek přeskočen", file=sys.stderr)
     return rows
 
 
